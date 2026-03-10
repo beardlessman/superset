@@ -87,6 +87,7 @@ import { PivotTableChartPlugin as PivotTableChartPluginV2 } from '@superset-ui/p
 import { HandlebarsChartPlugin } from '@superset-ui/plugin-chart-handlebars';
 import { ChartCustomizationPlugins, FilterPlugins } from 'src/constants';
 import AgGridTableChartPlugin from '@superset-ui/plugin-chart-ag-grid-table';
+import { SupersetPluginGeojsonLasso } from '../../../plugins/superset-plugin-geojson-lasso/src';
 import TimeTableChartPlugin from '../TimeTable';
 
 export default class MainPreset extends Preset {
@@ -132,6 +133,9 @@ export default class MainPreset extends Preset {
         }),
         new HorizonChartPlugin().configure({ key: VizType.Horizon }),
         new ScatterMapChartPlugin().configure({ key: VizType.PointClusterMap }),
+        new SupersetPluginGeojsonLasso().configure({
+          key: 'deck_geojson',
+        }),
         new PairedTTestChartPlugin().configure({ key: VizType.PairedTTest }),
         new ParallelCoordinatesChartPlugin().configure({
           key: VizType.ParallelCoordinates,

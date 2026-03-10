@@ -78,10 +78,15 @@ const alterProps = (props: JsonObject, propOverrides: JsonObject) => {
     newProps.strokeColor = hexToRGB(props.strokeColor);
   }
 
-  return {
-    ...newProps,
-    ...propOverrides,
-  };
+  const mergedProps = { ...newProps };
+  Object.entries(propOverrides).forEach(([key, value]) => {
+    const hasOwnValue = key in mergedProps && mergedProps[key] != null;
+    if (!hasOwnValue) {
+      mergedProps[key] = value;
+    }
+  });
+
+  return mergedProps;
 };
 let features: ProcessedFeature[] = [];
 const recurseGeoJson = (
