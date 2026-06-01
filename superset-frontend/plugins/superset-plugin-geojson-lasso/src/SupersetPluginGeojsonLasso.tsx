@@ -23,8 +23,15 @@ import type { AdhocFilter, DataMask, JsonObject, JsonValue } from '@superset-ui/
 import type { Feature, Geometry, GeoJsonProperties } from 'geojson';
 import { DeckGLContainerHandle, DeckGLContainerStyledWrapper } from '../../legacy-preset-chart-deckgl/src/DeckGLContainer';
 import type { TooltipProps } from '../../legacy-preset-chart-deckgl/src/components/Tooltip';
+import { DEFAULT_DECKGL_TILES } from '../../legacy-preset-chart-deckgl/src/utilities/Shared_DeckGL';
+import {
+  MAPBOX_LAYER_PREFIX,
+  TILE_LAYER_PREFIX,
+} from '../../legacy-preset-chart-deckgl/src/utils';
 import fitViewport, { Viewport } from '../../legacy-preset-chart-deckgl/src/utils/fitViewport';
 import { getLayer, getPoints } from '../../legacy-preset-chart-deckgl/src/layers/Geojson/Geojson';
+
+const DEFAULT_OSM_MAP_STYLE = DEFAULT_DECKGL_TILES[0][0];
 
 type FilterValue = string | number | boolean;
 type LassoPointKind = string;
@@ -59,6 +66,56 @@ type LassoProps = {
 
 const NOOP = () => {};
 const AUTOZOOM_MAX_ZOOM = 12;
+
+/** Legacy explore payload is `queriesData[0]` with shape `{ data: { features, mapboxApiKey } }`. */
+function getLegacyPayloadData(
+  payload: LassoProps['payload'] | undefined,
+): JsonObject & { features?: unknown[]; mapboxApiKey?: string } {
+  const root = (payload?.data ?? payload) as JsonObject | undefined;
+  return root ?? {};
+}
+
+/**
+ * Legacy deck.gl (6.1.x) basemap: Mapbox vector (`mapbox://…` + token) or raster tiles
+ * (`https://…/{z}/{x}/{y}.png`, optional `tile://` prefix). MapLibre style.json URLs
+ * are not supported by DeckGLContainer.
+ */
+function resolveLegacyMapStyle(
+  formData: LassoProps['formData'],
+  mapboxApiKey?: string,
+): string {
+  const mapboxStyle =
+    typeof formData.mapbox_style === 'string' ? formData.mapbox_style.trim() : '';
+  const maplibreStyle =
+    typeof formData.maplibre_style === 'string' ? formData.maplibre_style.trim() : '';
+  const candidate = mapboxStyle || maplibreStyle;
+
+  if (!candidate) {
+    return DEFAULT_OSM_MAP_STYLE;
+  }
+
+  if (candidate.includes('style.json')) {
+    return DEFAULT_OSM_MAP_STYLE;
+  }
+
+  if (
+    candidate.startsWith(MAPBOX_LAYER_PREFIX) &&
+    !(mapboxApiKey && mapboxApiKey.trim())
+  ) {
+    return DEFAULT_OSM_MAP_STYLE;
+  }
+
+  if (
+    candidate.startsWith(TILE_LAYER_PREFIX) ||
+    candidate.startsWith(MAPBOX_LAYER_PREFIX) ||
+    candidate.includes('openstreetmap') ||
+    candidate.includes('/{z}/')
+  ) {
+    return candidate;
+  }
+
+  return DEFAULT_OSM_MAP_STYLE;
+}
 
 /**
  * deck.gl defaults give TextLayer a fixed ASCII characterSet array; we must use 'auto'
@@ -301,7 +358,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   const currentViewportRef = useRef(currentViewport);
 
   const formData = props.formData ?? {};
-  const payloadData = props.payload?.data ?? {};
+  const payloadData = getLegacyPayloadData(props.payload);
   const setControlValue = props.setControlValue ?? NOOP;
   const onAddFilter = props.onAddFilter ?? NOOP;
   const onContextMenu = props.onContextMenu ?? NOOP;
@@ -322,8 +379,12 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   }, []);
 
   const viewport: Viewport = useMemo(() => {
-    if (formData.autozoom && payloadData.features) {
-      const points = getPoints(payloadData.features as any) || [];
+    if (formData.autozoom) {
+      const normalizedFeatures = flattenGeoJsonFeatures(payloadData);
+      const points =
+        normalizedFeatures.length > 0
+          ? getPoints(normalizedFeatures as never) || []
+          : [];
       if (points.length) {
         return fitViewport(props.viewport, {
           width: props.width,
@@ -334,7 +395,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
       }
     }
     return props.viewport;
-  }, [formData.autozoom, payloadData.features, props.viewport, props.width, props.height]);
+  }, [formData.autozoom, payloadData, props.viewport, props.width, props.height]);
 
   const filteredPayloadForSelf = useMemo(() => {
     if (!props.emitCrossFilters || !selfFilterValues) {
@@ -781,16 +842,13 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   return (
     <DeckGLContainerStyledWrapper
       ref={containerRef}
-      mapProvider={formData.map_renderer === 'mapbox' ? 'mapbox' : 'maplibre'}
-      mapboxApiKey={(payloadData.mapboxApiKey as string) || ''}
+      mapboxApiAccessToken={(payloadData.mapboxApiKey as string) || ''}
       viewport={viewport}
       layers={[layer]}
-      mapStyle={
-        formData.map_renderer === 'mapbox'
-          ? ((formData.mapbox_style as string) || 'mapbox://styles/mapbox/light-v9')
-          : ((formData.maplibre_style as string) ||
-            'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json')
-      }
+      mapStyle={resolveLegacyMapStyle(
+        formData,
+        (payloadData.mapboxApiKey as string) || '',
+      )}
       setControlValue={setControlValue}
       height={props.height}
       width={props.width}
