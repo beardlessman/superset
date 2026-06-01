@@ -26,7 +26,6 @@ import CalendarChartPlugin from '@superset-ui/legacy-plugin-chart-calendar';
 import ChordChartPlugin from '@superset-ui/legacy-plugin-chart-chord';
 import CountryMapChartPlugin from '@superset-ui/legacy-plugin-chart-country-map';
 import HorizonChartPlugin from '@superset-ui/legacy-plugin-chart-horizon';
-import MapBoxChartPlugin from '@superset-ui/legacy-plugin-chart-map-box';
 import PairedTTestChartPlugin from '@superset-ui/legacy-plugin-chart-paired-t-test';
 import ParallelCoordinatesChartPlugin from '@superset-ui/legacy-plugin-chart-parallel-coordinates';
 import PartitionChartPlugin from '@superset-ui/legacy-plugin-chart-partition';
@@ -41,6 +40,7 @@ import {
   TimePivotChartPlugin,
 } from '@superset-ui/legacy-preset-chart-nvd3';
 import { DeckGLChartPreset } from '@superset-ui/legacy-preset-chart-deckgl';
+import MapBoxChartPlugin from '@superset-ui/legacy-plugin-chart-map-box';
 import { CartodiagramPlugin } from '@superset-ui/plugin-chart-cartodiagram';
 import {
   BigNumberChartPlugin,
@@ -87,6 +87,7 @@ import { PivotTableChartPlugin as PivotTableChartPluginV2 } from '@superset-ui/p
 import { HandlebarsChartPlugin } from '@superset-ui/plugin-chart-handlebars';
 import { ChartCustomizationPlugins, FilterPlugins } from 'src/constants';
 import AgGridTableChartPlugin from '@superset-ui/plugin-chart-ag-grid-table';
+import { SupersetPluginGeojsonLasso } from '../../../plugins/superset-plugin-geojson-lasso/src';
 import TimeTableChartPlugin from '../TimeTable';
 
 export default class MainPreset extends Preset {
@@ -132,6 +133,9 @@ export default class MainPreset extends Preset {
         }),
         new HorizonChartPlugin().configure({ key: VizType.Horizon }),
         new MapBoxChartPlugin().configure({ key: VizType.MapBox }),
+        new SupersetPluginGeojsonLasso().configure({
+          key: 'deck_geojson',
+        }),
         new PairedTTestChartPlugin().configure({ key: VizType.PairedTTest }),
         new ParallelCoordinatesChartPlugin().configure({
           key: VizType.ParallelCoordinates,
