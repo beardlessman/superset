@@ -17,7 +17,10 @@
  * under the License.
  */
 import { t } from '@apache-superset/core/translation';
-import type { ControlPanelConfig } from '@superset-ui/chart-controls';
+import type {
+  ControlPanelConfig,
+  CustomControlItem,
+} from '@superset-ui/chart-controls';
 import {
   FeatureFlag,
   isFeatureEnabled,
@@ -27,7 +30,24 @@ import {
   type QueryFormData,
 } from '@superset-ui/core';
 import geojsonControlPanel from '../../../legacy-preset-chart-deckgl/src/layers/Geojson/controlPanel';
+import { fillColorPicker } from '../../../legacy-preset-chart-deckgl/src/utilities/Shared_DeckGL';
 import { formatSelectOptions } from '../../../legacy-preset-chart-deckgl/src/utilities/utils';
+
+/**
+ * GeoJSON charts have no color_scheme_type control, so the shared fillColorPicker
+ * visibility rule never passes and the control stays hidden. Match strokeColorPicker:
+ * always show Fill Color so opacity can be set to 0 to use GeoJSON fillColor properties.
+ */
+const lassoFillColorPicker: CustomControlItem = {
+  name: fillColorPicker.name,
+  config: {
+    label: fillColorPicker.config.label,
+    description: fillColorPicker.config.description,
+    type: fillColorPicker.config.type,
+    default: fillColorPicker.config.default,
+    renderTrigger: fillColorPicker.config.renderTrigger,
+  },
+};
 
 const lassoKindsControl = {
   name: 'lasso_point_kinds',
@@ -211,10 +231,24 @@ const config: ControlPanelConfig = {
         return section;
       }
 
+      const controlSetRows = (section.controlSetRows || []).map(row =>
+        row.map(control => {
+          if (
+            typeof control === 'object' &&
+            control !== null &&
+            'name' in control &&
+            control.name === fillColorPicker.name
+          ) {
+            return lassoFillColorPicker;
+          }
+          return control;
+        }),
+      );
+
       return {
         ...section,
         controlSetRows: [
-          ...(section.controlSetRows || []),
+          ...controlSetRows,
           [pointRadiusControl, pointRadiusScaleControl],
           [pointRadiusUnitsControl],
           [labelOffsetXControl, labelOffsetYControl],
