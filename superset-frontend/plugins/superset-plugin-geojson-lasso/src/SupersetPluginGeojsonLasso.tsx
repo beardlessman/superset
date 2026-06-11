@@ -359,6 +359,8 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
 
   const formData = props.formData ?? {};
   const payloadData = getLegacyPayloadData(props.payload);
+  const mapboxToken = (payloadData.mapboxApiKey as string) || '';
+  const mapStyle = resolveLegacyMapStyle(formData, mapboxToken);
   const setControlValue = props.setControlValue ?? NOOP;
   const onAddFilter = props.onAddFilter ?? NOOP;
   const onContextMenu = props.onContextMenu ?? NOOP;
@@ -839,16 +841,46 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
     applyCrossFilter,
   ]);
 
+  useEffect(() => {
+    const features = flattenGeoJsonFeatures(payloadData);
+    const isMapboxStyle = mapStyle.startsWith(MAPBOX_LAYER_PREFIX);
+    const isTileStyle =
+      mapStyle.startsWith(TILE_LAYER_PREFIX) ||
+      mapStyle.includes('openstreetmap') ||
+      mapStyle.includes('/{z}/');
+    // Temporary diagnostics for local map rendering issues.
+    // eslint-disable-next-line no-console
+    console.log('[geojson-lasso:map-debug]', {
+      sliceId: formData.slice_id,
+      mapboxStyle: formData.mapbox_style,
+      maplibreStyle: formData.maplibre_style,
+      resolvedMapStyle: mapStyle,
+      hasMapboxToken: Boolean(mapboxToken),
+      mapboxTokenPrefix: mapboxToken ? mapboxToken.slice(0, 6) : '',
+      mapMode: isMapboxStyle ? 'mapbox' : isTileStyle ? 'tile' : 'none',
+      featuresCount: features.length,
+      viewport,
+      chartSize: { width: props.width, height: props.height },
+    });
+  }, [
+    formData.mapbox_style,
+    formData.maplibre_style,
+    formData.slice_id,
+    mapStyle,
+    mapboxToken,
+    payloadData,
+    props.width,
+    props.height,
+    viewport,
+  ]);
+
   return (
     <DeckGLContainerStyledWrapper
       ref={containerRef}
-      mapboxApiAccessToken={(payloadData.mapboxApiKey as string) || ''}
+      mapboxApiAccessToken={mapboxToken}
       viewport={viewport}
       layers={[layer]}
-      mapStyle={resolveLegacyMapStyle(
-        formData,
-        (payloadData.mapboxApiKey as string) || '',
-      )}
+      mapStyle={mapStyle}
       setControlValue={setControlValue}
       height={props.height}
       width={props.width}
