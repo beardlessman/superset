@@ -2,7 +2,10 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "baseUrl": "../..",
-    "outDir": "lib"
+    "outDir": "lib",
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
   },
   "include": [
     "src/**/*.ts",
@@ -16,10 +19,5 @@
     "src/**/*.jsx",
     "src/**/*.test.*",
     "src/**/*.stories.*"
-  ],
-  "references": [
-    { "path": "../../packages/superset-core" },
-    { "path": "../../packages/superset-ui-core" },
-    { "path": "../../packages/superset-ui-chart-controls" }
   ]
 }

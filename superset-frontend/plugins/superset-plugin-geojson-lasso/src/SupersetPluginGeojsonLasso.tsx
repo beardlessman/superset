@@ -21,7 +21,10 @@ import { GeoJsonLayer } from '@deck.gl/layers';
 import { WebMercatorViewport } from '@math.gl/web-mercator';
 import type { AdhocFilter, DataMask, JsonObject, JsonValue } from '@superset-ui/core';
 import type { Feature, Geometry, GeoJsonProperties } from 'geojson';
-import { DeckGLContainerHandle, DeckGLContainerStyledWrapper } from '../../legacy-preset-chart-deckgl/src/DeckGLContainer';
+import {
+  LassoDeckGLContainerHandle,
+  LassoDeckGLContainerStyledWrapper,
+} from './LassoDeckGLContainer';
 import type { TooltipProps } from '../../legacy-preset-chart-deckgl/src/components/Tooltip';
 import { DEFAULT_DECKGL_TILES } from '../../legacy-preset-chart-deckgl/src/utilities/Shared_DeckGL';
 import {
@@ -338,7 +341,7 @@ function hasActiveFilterStateValue(value: unknown): boolean {
 }
 
 const SupersetPluginGeojsonLasso = (props: LassoProps) => {
-  const containerRef = useRef<DeckGLContainerHandle>();
+  const containerRef = useRef<LassoDeckGLContainerHandle>();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [isLassoActive, setIsLassoActive] = useState(false);
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('all');
@@ -875,7 +878,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   ]);
 
   return (
-    <DeckGLContainerStyledWrapper
+    <LassoDeckGLContainerStyledWrapper
       ref={containerRef}
       mapboxApiAccessToken={mapboxToken}
       viewport={viewport}
@@ -1009,7 +1012,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
           ) : null}
         </svg>
       ) : null}
-    </DeckGLContainerStyledWrapper>
+    </LassoDeckGLContainerStyledWrapper>
   );
 };
 
