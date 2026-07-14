@@ -102,8 +102,9 @@ export const LassoDeckGLContainer = memo(
     useEffect(() => {
       if (!isEqual(props.viewport, prevViewport)) {
         setViewState(props.viewport);
+        props.onViewportChange?.(props.viewport);
       }
-    }, [prevViewport, props.viewport]);
+    }, [prevViewport, props.onViewportChange, props.viewport]);
 
     const onViewStateChange = useCallback(
       ({ viewState: nextViewState }: { viewState: JsonObject }) => {

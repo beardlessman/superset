@@ -340,6 +340,18 @@ function hasActiveFilterStateValue(value: unknown): boolean {
   return true;
 }
 
+function isCrossFilterActive(
+  filterState?: {
+    value?: unknown;
+    selectedValues?: unknown;
+  },
+): boolean {
+  return (
+    hasActiveFilterStateValue(filterState?.value) ||
+    hasActiveFilterStateValue(filterState?.selectedValues)
+  );
+}
+
 const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   const containerRef = useRef<LassoDeckGLContainerHandle>();
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -504,25 +516,41 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   ]);
 
   const pointFeatures = useMemo(() => {
-    // Use the same processed data that deck.gl layer renders.
-    // This avoids mismatches across different payload shapes.
-    const layerData = ((layer as unknown as { props?: { data?: unknown } }).props
-      ?.data ?? []) as unknown;
-    const base = Array.isArray(layerData)
-      ? (layerData as ProcessedFeature[])
-      : flattenGeoJsonFeatures(payloadData);
+    const fromPayload = flattenGeoJsonFeatures(payloadData);
+    const useSelfFilteredLayer =
+      props.emitCrossFilters && selfFilterValues !== null;
+    const layerData = useSelfFilteredLayer
+      ? ((layer as unknown as { props?: { data?: unknown } }).props?.data ??
+        [])
+      : null;
+    const base =
+      useSelfFilteredLayer && Array.isArray(layerData)
+        ? (layerData as ProcessedFeature[])
+        : fromPayload;
     return base
       .filter(f => f.geometry?.type === 'Point')
       .filter(feature => isPointAllowedByKind(feature, allowedPointKinds));
-  }, [allowedPointKinds, layer, payloadData]);
+  }, [
+    allowedPointKinds,
+    layer,
+    payloadData,
+    props.emitCrossFilters,
+    selfFilterValues,
+  ]);
   const lineFeatures = useMemo(() => {
-    const layerData = ((layer as unknown as { props?: { data?: unknown } }).props
-      ?.data ?? []) as unknown;
-    const base = Array.isArray(layerData)
-      ? (layerData as ProcessedFeature[])
-      : flattenGeoJsonFeatures(payloadData);
+    const fromPayload = flattenGeoJsonFeatures(payloadData);
+    const useSelfFilteredLayer =
+      props.emitCrossFilters && selfFilterValues !== null;
+    const layerData = useSelfFilteredLayer
+      ? ((layer as unknown as { props?: { data?: unknown } }).props?.data ??
+        [])
+      : null;
+    const base =
+      useSelfFilteredLayer && Array.isArray(layerData)
+        ? (layerData as ProcessedFeature[])
+        : fromPayload;
     return base.filter(f => f.geometry?.type === 'LineString');
-  }, [layer, payloadData]);
+  }, [layer, payloadData, props.emitCrossFilters, selfFilterValues]);
 
   useEffect(() => {
     isLassoActiveRef.current = isLassoActive;
@@ -654,14 +682,19 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
     };
   }, [getSvgPointFromClient, isDrawing, handleLassoMouseUp]);
 
+  const crossFilterActive = isCrossFilterActive(props.filterState);
+
   useEffect(() => {
     // When cross-filter is cleared from the dashboard filter bar,
-    // restore full dataset on the source chart.
+    // restore full dataset and reset lasso selection state.
     if (!props.emitCrossFilters) return;
-    if (!hasActiveFilterStateValue(props.filterState?.value)) {
+    if (!crossFilterActive) {
       setSelfFilterValues(null);
+      setSelectedFeatures([]);
+      setLassoPath([]);
+      setIsDrawing(false);
     }
-  }, [props.emitCrossFilters, props.filterState?.value]);
+  }, [crossFilterActive, props.emitCrossFilters]);
 
   const applyCrossFilter = useCallback(
     (
