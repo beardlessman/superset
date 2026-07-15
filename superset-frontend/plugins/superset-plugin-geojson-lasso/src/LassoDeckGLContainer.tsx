@@ -65,6 +65,8 @@ export type LassoDeckGLContainerProps = {
   height: number;
   layers: (Layer | (() => Layer))[];
   onViewportChange?: (viewport: Viewport) => void;
+  /** When false, map pan/zoom is disabled (used while lasso is active). */
+  controller?: boolean;
 };
 
 export const LassoDeckGLContainer = memo(
@@ -74,6 +76,7 @@ export const LassoDeckGLContainer = memo(
     const [viewState, setViewState] = useState(props.viewport);
     const prevViewport = usePrevious(props.viewport);
     const glContextRef = useRef<WebGL2RenderingContext | null>(null);
+    const viewStateRef = useRef<Viewport>(props.viewport);
 
     useEffect(
       () => () => {
@@ -82,7 +85,14 @@ export const LassoDeckGLContainer = memo(
       [],
     );
 
-    useImperativeHandle(ref, () => ({ setTooltip }), []);
+    useImperativeHandle(
+      ref,
+      () => ({
+        setTooltip,
+        getViewState: () => viewStateRef.current,
+      }),
+      [],
+    );
 
     const tick = useCallback(() => {
       if (lastUpdate && Date.now() - lastUpdate > TICK) {
@@ -101,6 +111,7 @@ export const LassoDeckGLContainer = memo(
 
     useEffect(() => {
       if (!isEqual(props.viewport, prevViewport)) {
+        viewStateRef.current = props.viewport;
         setViewState(props.viewport);
         props.onViewportChange?.(props.viewport);
       }
@@ -109,6 +120,7 @@ export const LassoDeckGLContainer = memo(
     const onViewStateChange = useCallback(
       ({ viewState: nextViewState }: { viewState: JsonObject }) => {
         const viewport = nextViewState as Viewport;
+        viewStateRef.current = viewport;
         setViewState(viewport);
         setLastUpdate(Date.now());
         props.onViewportChange?.(viewport);
@@ -157,6 +169,7 @@ export const LassoDeckGLContainer = memo(
     };
 
     const { children = null, height, width } = props;
+    const controllerEnabled = props.controller !== false;
 
     return (
       <>
@@ -168,7 +181,7 @@ export const LassoDeckGLContainer = memo(
           }}
         >
           <DeckGL
-            controller
+            controller={controllerEnabled}
             width={width}
             height={height}
             layers={layers()}
@@ -206,4 +219,5 @@ export const LassoDeckGLContainerStyledWrapper = styled(LassoDeckGLContainer)`
 
 export type LassoDeckGLContainerHandle = typeof LassoDeckGLContainer & {
   setTooltip: (tooltip: ReactNode) => void;
+  getViewState: () => Viewport;
 };

@@ -324,6 +324,40 @@ function getUniqueFilterValues(values: FilterValue[]): FilterValue[] {
   return Array.from(new Set(values));
 }
 
+/**
+ * Keep one feature per geometry + entity value (or coordinates when entity is empty).
+ * Prevents duplicated payload rows from inflating lasso selection counts.
+ */
+function dedupeFeatures(
+  features: ProcessedFeature[],
+  entity?: string,
+): ProcessedFeature[] {
+  const seen = new Set<string>();
+  return features.filter(feature => {
+    const geometryKey = JSON.stringify(feature.geometry ?? null);
+    const rawEntity = entity ? feature.properties?.[entity] : undefined;
+    const entityKey =
+      rawEntity !== null && rawEntity !== undefined ? String(rawEntity) : '';
+    const key = `${feature.geometry?.type ?? ''}|${entityKey}|${geometryKey}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function getEntityValuesForGeometry(
+  selected: ProcessedFeature[],
+  entity: string,
+  geometryType: Geometry['type'],
+): FilterValue[] {
+  return getSelectedEntityValues(
+    selected.filter(feature => feature.geometry?.type === geometryType),
+    entity,
+  );
+}
+
 function hasActiveFilterStateValue(value: unknown): boolean {
   if (value === null || value === undefined) {
     return false;
@@ -360,7 +394,6 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [lassoPath, setLassoPath] = useState<{ x: number; y: number }[]>([]);
   const [selectedFeatures, setSelectedFeatures] = useState<ProcessedFeature[]>([]);
-  const [currentViewport, setCurrentViewport] = useState<Viewport>(props.viewport);
   const [selfFilterValues, setSelfFilterValues] = useState<{
     names: string[];
     couriers: string[];
@@ -370,7 +403,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   const lassoPathRef = useRef(lassoPath);
   const pointFeaturesRef = useRef<ProcessedFeature[]>([]);
   const lineFeaturesRef = useRef<ProcessedFeature[]>([]);
-  const currentViewportRef = useRef(currentViewport);
+  const selectionModeRef = useRef(selectionMode);
 
   const formData = props.formData ?? {};
   const payloadData = getLegacyPayloadData(props.payload);
@@ -516,41 +549,29 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
   ]);
 
   const pointFeatures = useMemo(() => {
-    const fromPayload = flattenGeoJsonFeatures(payloadData);
-    const useSelfFilteredLayer =
-      props.emitCrossFilters && selfFilterValues !== null;
-    const layerData = useSelfFilteredLayer
-      ? ((layer as unknown as { props?: { data?: unknown } }).props?.data ??
-        [])
-      : null;
-    const base =
-      useSelfFilteredLayer && Array.isArray(layerData)
-        ? (layerData as ProcessedFeature[])
-        : fromPayload;
-    return base
-      .filter(f => f.geometry?.type === 'Point')
-      .filter(feature => isPointAllowedByKind(feature, allowedPointKinds));
-  }, [
-    allowedPointKinds,
-    layer,
-    payloadData,
-    props.emitCrossFilters,
-    selfFilterValues,
-  ]);
+    const layerData = (layer as unknown as { props?: { data?: unknown } }).props
+      ?.data;
+    const base = Array.isArray(layerData)
+      ? (layerData as ProcessedFeature[])
+      : flattenGeoJsonFeatures(payloadData);
+    return dedupeFeatures(
+      base
+        .filter(f => f.geometry?.type === 'Point')
+        .filter(feature => isPointAllowedByKind(feature, allowedPointKinds)),
+      pointEntity,
+    );
+  }, [allowedPointKinds, layer, payloadData, pointEntity]);
   const lineFeatures = useMemo(() => {
-    const fromPayload = flattenGeoJsonFeatures(payloadData);
-    const useSelfFilteredLayer =
-      props.emitCrossFilters && selfFilterValues !== null;
-    const layerData = useSelfFilteredLayer
-      ? ((layer as unknown as { props?: { data?: unknown } }).props?.data ??
-        [])
-      : null;
-    const base =
-      useSelfFilteredLayer && Array.isArray(layerData)
-        ? (layerData as ProcessedFeature[])
-        : fromPayload;
-    return base.filter(f => f.geometry?.type === 'LineString');
-  }, [layer, payloadData, props.emitCrossFilters, selfFilterValues]);
+    const layerData = (layer as unknown as { props?: { data?: unknown } }).props
+      ?.data;
+    const base = Array.isArray(layerData)
+      ? (layerData as ProcessedFeature[])
+      : flattenGeoJsonFeatures(payloadData);
+    return dedupeFeatures(
+      base.filter(f => f.geometry?.type === 'LineString'),
+      lineEntity,
+    );
+  }, [layer, lineEntity, payloadData]);
 
   useEffect(() => {
     isLassoActiveRef.current = isLassoActive;
@@ -568,27 +589,8 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
     lineFeaturesRef.current = lineFeatures;
   }, [lineFeatures]);
   useEffect(() => {
-    currentViewportRef.current = currentViewport;
-  }, [currentViewport]);
-
-  const projectToScreen = useCallback(
-    (lon: number, lat: number) => {
-      const { longitude, latitude, zoom, bearing = 0, pitch = 0 } =
-        currentViewportRef.current;
-      const mercator = new WebMercatorViewport({
-        width: props.width,
-        height: props.height,
-        longitude,
-        latitude,
-        zoom,
-        bearing,
-        pitch,
-      });
-      const [x, y] = mercator.project([lon, lat]);
-      return { x, y };
-    },
-    [props.height, props.width],
-  );
+    selectionModeRef.current = selectionMode;
+  }, [selectionMode]);
 
   const getSvgPointFromClient = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -597,71 +599,111 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
     return { x: clientX - rect.left, y: clientY - rect.top };
   }, []);
 
+  /**
+   * Project lon/lat using the map's live viewState and the SVG's CSS pixel size.
+   * Using chart props.width/height here misaligns hit-testing after autozoom /
+   * filter-driven layout changes and selects the wrong points.
+   */
+  const projectToScreen = useCallback((lon: number, lat: number) => {
+    const liveViewport =
+      containerRef.current?.getViewState?.() ??
+      (props.viewport as Viewport);
+    const svg = svgRef.current;
+    const rect = svg?.getBoundingClientRect();
+    const liveSize = liveViewport as Viewport & {
+      width?: number;
+      height?: number;
+    };
+    const width =
+      rect && rect.width > 0
+        ? rect.width
+        : Number(liveSize.width) || props.width;
+    const height =
+      rect && rect.height > 0
+        ? rect.height
+        : Number(liveSize.height) || props.height;
+    const mercator = new WebMercatorViewport({
+      width,
+      height,
+      longitude: liveViewport.longitude,
+      latitude: liveViewport.latitude,
+      zoom: liveViewport.zoom,
+      bearing: liveViewport.bearing ?? 0,
+      pitch: liveViewport.pitch ?? 0,
+    });
+    const [x, y] = mercator.project([lon, lat]);
+    return { x, y };
+  }, [props.height, props.width, props.viewport]);
+
   const handleLassoMouseDown = useCallback(
     (event: React.MouseEvent<SVGSVGElement>) => {
       if (!isLassoActive) return;
       const startPoint = getSvgPointFromClient(event.clientX, event.clientY);
       if (!startPoint) return;
+      isDrawingRef.current = true;
       setIsDrawing(true);
       setLassoPath([startPoint]);
+      setSelectedFeatures([]);
     },
     [getSvgPointFromClient, isLassoActive],
   );
 
-  const handleLassoMouseMove = useCallback(
-    (event: React.MouseEvent<SVGSVGElement>) => {
-      if (!isLassoActive || !isDrawing) return;
-      const nextPoint = getSvgPointFromClient(event.clientX, event.clientY);
-      if (!nextPoint) return;
-      setLassoPath(prev => [...prev, nextPoint]);
-    },
-    [getSvgPointFromClient, isDrawing, isLassoActive],
-  );
+  // Mouse move/up are handled on window so the gesture continues outside the SVG
+  // and is finalized exactly once (SVG + window handlers would double-fire).
 
   const handleLassoMouseUp = useCallback(() => {
     const active = isLassoActiveRef.current;
     const drawing = isDrawingRef.current;
     const currentPath = lassoPathRef.current;
+    const mode = selectionModeRef.current;
+    // Clear the drawing flag synchronously so a duplicate mouseup is a no-op.
     if (!active || !drawing || currentPath.length < 3) {
+      isDrawingRef.current = false;
       setIsDrawing(false);
       return;
     }
+    isDrawingRef.current = false;
+    setIsDrawing(false);
+
     const polygon = [...currentPath, currentPath[0]];
-    const selectedPoints = pointFeaturesRef.current.filter(feature => {
-      const coordinates =
-        feature.geometry?.type === 'Point' ? feature.geometry.coordinates : null;
-      if (!coordinates || !Array.isArray(coordinates)) return false;
-      const [lon, lat] = coordinates as [number, number];
-      const screenPoint = projectToScreen(lon, lat);
-      return isPointInPolygon(screenPoint, polygon);
-    });
-    const selectedLines = lineFeaturesRef.current.filter(feature => {
-      const coordinates =
-        feature.geometry?.type === 'LineString'
-          ? (feature.geometry.coordinates as [number, number][])
-          : null;
-      if (!coordinates || coordinates.length < 2) return false;
-      const projected = coordinates.map(([lon, lat]) => projectToScreen(lon, lat));
-      return lineIntersectsPolygon(projected, polygon);
-    });
+    const selectedPoints = dedupeFeatures(
+      pointFeaturesRef.current.filter(feature => {
+        const coordinates =
+          feature.geometry?.type === 'Point'
+            ? feature.geometry.coordinates
+            : null;
+        if (!coordinates || !Array.isArray(coordinates)) return false;
+        const [lon, lat] = coordinates as [number, number];
+        const screenPoint = projectToScreen(lon, lat);
+        return isPointInPolygon(screenPoint, polygon);
+      }),
+      pointEntity,
+    );
+    const selectedLines = dedupeFeatures(
+      lineFeaturesRef.current.filter(feature => {
+        const coordinates =
+          feature.geometry?.type === 'LineString'
+            ? (feature.geometry.coordinates as [number, number][])
+            : null;
+        if (!coordinates || coordinates.length < 2) return false;
+        const projected = coordinates.map(([lon, lat]) =>
+          projectToScreen(lon, lat),
+        );
+        return lineIntersectsPolygon(projected, polygon);
+      }),
+      lineEntity,
+    );
     const selected =
-      selectionMode === 'point'
+      mode === 'point'
         ? selectedPoints
-        : selectionMode === 'line'
+        : mode === 'line'
           ? selectedLines
           : [...selectedPoints, ...selectedLines];
-    // Debug selected features captured by lasso selection.
+              // Debug selected features captured by lasso selection.
     // eslint-disable-next-line no-console
     console.log('Geojson lasso selected features:', selected);
     setSelectedFeatures(selected);
-    setIsDrawing(false);
-  }, [projectToScreen, selectionMode]);
-
-  useEffect(() => {
-    // Keep selection projection in sync with the effective viewport
-    // (important when autozoom changes map position without user interaction).
-    setCurrentViewport(viewport);
-  }, [viewport]);
+  }, [lineEntity, pointEntity, projectToScreen]);
 
   useEffect(() => {
     if (!isDrawing) return undefined;
@@ -745,15 +787,22 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
     };
 
     const filterEntity = selectionMode === 'line' ? lineEntity : pointEntity;
-    const val = getSelectedEntityValues(selectedFeatures, filterEntity);
+    // Point filter fields come only from Point geometries; line fields only from lines.
+    // Otherwise Point features that also carry courier_name inflate filter values.
     const pointValues =
-      selectionMode === 'all'
-        ? getSelectedEntityValues(selectedFeatures, pointEntity)
+      selectionMode === 'point' || selectionMode === 'all'
+        ? getEntityValuesForGeometry(selectedFeatures, pointEntity, 'Point')
         : [];
     const lineValues =
-      selectionMode === 'all'
-        ? getSelectedEntityValues(selectedFeatures, lineEntity)
+      selectionMode === 'line' || selectionMode === 'all'
+        ? getEntityValuesForGeometry(selectedFeatures, lineEntity, 'LineString')
         : [];
+    const val =
+      selectionMode === 'line'
+        ? lineValues
+        : selectionMode === 'point'
+          ? pointValues
+          : getUniqueFilterValues([...pointValues, ...lineValues]);
     if (!val.length && !pointValues.length && !lineValues.length) return;
 
     if (props.emitCrossFilters) {
@@ -800,16 +849,10 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
         }
       } else {
         setSelfFilterValues({
-          names:
-            selectionMode === 'point'
-              ? getSelectedEntityValues(selectedFeatures, pointEntity).map(String)
-              : [],
-          couriers:
-            selectionMode === 'line'
-              ? getSelectedEntityValues(selectedFeatures, lineEntity).map(String)
-              : [],
+          names: selectionMode === 'point' ? pointValues.map(String) : [],
+          couriers: selectionMode === 'line' ? lineValues.map(String) : [],
         });
-        applyCrossFilter(selectedFeatures, filterEntity);
+        applyCrossFilter(selectedFeatures, filterEntity, undefined, val);
         keepLassoPathAfterApply();
       }
       return;
@@ -875,6 +918,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
     props.adhocFilters,
     setControlValue,
     applyCrossFilter,
+    formData,
   ]);
 
   useEffect(() => {
@@ -920,7 +964,7 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
       setControlValue={setControlValue}
       height={props.height}
       width={props.width}
-      onViewportChange={setCurrentViewport}
+      controller={!isLassoActive}
     >
       <div
         style={{
@@ -1032,8 +1076,6 @@ const SupersetPluginGeojsonLasso = (props: LassoProps) => {
             zIndex: 2,
           }}
           onMouseDown={handleLassoMouseDown}
-          onMouseMove={handleLassoMouseMove}
-          onMouseUp={handleLassoMouseUp}
         >
           {lassoPath.length > 1 ? (
             <polyline
